@@ -31,6 +31,8 @@ import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.testng.annotations.Test;
 
+import org.apache.commons.io.FileUtils;
+
 import static com.linkedin.tony.Constants.JOBS_SUFFIX;
 import static com.linkedin.tony.Constants.LOGS_SUFFIX;
 import static org.mockito.Mockito.mock;
@@ -59,17 +61,39 @@ public class TestUtils {
   }
 
   @Test
-  public void testUnzipArchive() {
+  public void testUnarchive() throws Exception {
+    // Test .zip
     ClassLoader classLoader = getClass().getClassLoader();
-    File file = new File(classLoader.getResource("test.zip").getFile());
+    Path tempDirZip = Files.createTempDirectory("tony-test-unarchive-zip");
     try {
-      Utils.unzipArchive(file.getPath(), "venv/");
-      Path unzippedFilePath = Paths.get("venv/123.xml");
+      File zipFile = new File(classLoader.getResource("test.zip").toURI());
+      Utils.unarchive(zipFile.getAbsolutePath(), tempDirZip.toAbsolutePath().toString());
+      Path unzippedFilePath = tempDirZip.resolve("123.xml");
       assertTrue(Files.exists(unzippedFilePath));
-      Files.deleteIfExists(Paths.get("venv/123.xml"));
-      Files.deleteIfExists(Paths.get("venv/"));
-    } catch (IOException e) {
-      fail(e.toString());
+    } finally {
+      FileUtils.deleteDirectory(tempDirZip.toFile());
+    }
+
+    // Test .tar.gz
+    Path tempDirTarGz = Files.createTempDirectory("tony-test-unarchive-targz");
+    try {
+      File tarGzFile = new File(classLoader.getResource("test.tar.gz").toURI());
+      Utils.unarchive(tarGzFile.getAbsolutePath(), tempDirTarGz.toAbsolutePath().toString());
+      Path unzippedFilePath = tempDirTarGz.resolve("test.file");
+      assertTrue(Files.exists(unzippedFilePath));
+    } finally {
+      FileUtils.deleteDirectory(tempDirTarGz.toFile());
+    }
+
+    // Test .tar
+    Path tempDirTar = Files.createTempDirectory("tony-test-unarchive-tar");
+    try {
+      File tarFile = new File(classLoader.getResource("test.tar").toURI());
+      Utils.unarchive(tarFile.getAbsolutePath(), tempDirTar.toAbsolutePath().toString());
+      Path unzippedFilePath = tempDirTar.resolve("test.file");
+      assertTrue(Files.exists(unzippedFilePath));
+    } finally {
+      FileUtils.deleteDirectory(tempDirTar.toFile());
     }
   }
 

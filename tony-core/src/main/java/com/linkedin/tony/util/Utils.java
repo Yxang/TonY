@@ -5,6 +5,7 @@
 package com.linkedin.tony.util;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -79,6 +80,10 @@ import com.linkedin.tony.models.JobContainerRequest;
 
 import net.lingala.zip4j.core.ZipFile;
 import net.lingala.zip4j.exception.ZipException;
+
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 
 import static com.linkedin.tony.Constants.SIDECAR_TB_ROLE_NAME;
 import static com.linkedin.tony.Constants.EVALUATOR_JOB_NAME;
@@ -168,7 +173,55 @@ public class Utils {
     zos.close();
   }
 
-  public static void unzipArchive(String src, String dst) {
+  public static void unarchive(String src, String dst) throws IOException {
+    if (src.endsWith(".zip")) {
+      unzipArchive(src, dst);
+    } else if (src.endsWith(".tar.gz") || src.endsWith(".tgz")) {
+      untarArchive(src, dst, true);
+    } else if (src.endsWith(".tar")) {
+      untarArchive(src, dst, false);
+    } else {
+      throw new IOException("Unsupported archive format: " + src);
+    }
+  }
+
+  private static void untarArchive(String src, String dst, boolean gzipped) throws IOException {
+    LOG.info("Un-taring " + src + " to destination " + dst);
+    File destDir = new File(dst);
+    if (!destDir.exists()) {
+      if (!destDir.mkdirs() && !destDir.isDirectory()) {
+        throw new IOException("Failed to create directory " + destDir);
+      }
+    }
+    try (FileInputStream fis = new FileInputStream(src);
+        TarArchiveInputStream tis = gzipped
+            ? new TarArchiveInputStream(new GzipCompressorInputStream(fis))
+            : new TarArchiveInputStream(fis)) {
+      TarArchiveEntry entry;
+      while ((entry = tis.getNextTarEntry()) != null) {
+        File outputFile = new File(destDir, entry.getName());
+        if (entry.isDirectory()) {
+          if (!outputFile.exists()) {
+            if (!outputFile.mkdirs() && !outputFile.isDirectory()) {
+              throw new IOException("Failed to create directory " + outputFile);
+            }
+          }
+        } else {
+          File parent = outputFile.getParentFile();
+          if (!parent.exists()) {
+            if (!parent.mkdirs() && !parent.isDirectory()) {
+              throw new IOException("Failed to create directory " + parent);
+            }
+          }
+          try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+            IOUtils.copy(tis, fos);
+          }
+        }
+      }
+    }
+  }
+
+  private static void unzipArchive(String src, String dst) {
     LOG.info("Unzipping " + src + " to destination " + dst);
     try {
       ZipFile zipFile = new ZipFile(src);
@@ -844,12 +897,20 @@ public class Utils {
     String tonySrcZipName = getTonySrcZipName(appId);
     if (new File(tonySrcZipName).exists()) {
       LOG.info("Unpacking src directory..");
-      Utils.unzipArchive(tonySrcZipName, "./");
+      try {
+        Utils.unarchive(tonySrcZipName, "./");
+      } catch (IOException e) {
+        LOG.fatal("Failed to unarchive " + tonySrcZipName, e);
+      }
     }
     File venvZip = new File(Constants.PYTHON_VENV_ZIP);
     if (venvZip.exists() && venvZip.isFile()) {
       LOG.info("Unpacking Python virtual environment.. ");
-      Utils.unzipArchive(Constants.PYTHON_VENV_ZIP, Constants.PYTHON_VENV_DIR);
+      try {
+        Utils.unarchive(Constants.PYTHON_VENV_ZIP, Constants.PYTHON_VENV_DIR);
+      } catch (IOException e) {
+        LOG.fatal("Failed to unarchive " + venvZip.getName(), e);
+      }
     } else {
       LOG.info("No virtual environment uploaded.");
     }
