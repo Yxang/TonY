@@ -250,8 +250,15 @@ public class TonyClient implements AutoCloseable {
     this.tonySrcZipPath = tonySrcZipName;
 
     if (pythonVenv != null) {
+      // Extract file extension from the source file
+      String fileExtension = "";
+      int lastDotIndex = pythonVenv.lastIndexOf('.');
+      if (lastDotIndex > 0) {
+        fileExtension = pythonVenv.substring(lastDotIndex);
+      }
+      String venvFileName = Constants.PYTHON_VENV_FILE + fileExtension;
       Utils.uploadFileAndSetConfResources(appResourcesPath,
-          new Path(pythonVenv), Constants.PYTHON_VENV_ZIP, tonyConf, LocalResourceType.FILE, TonyConfigurationKeys.getContainerResourcesKey());
+          new Path(pythonVenv), venvFileName, tonyConf, LocalResourceType.FILE, TonyConfigurationKeys.getContainerResourcesKey());
     }
 
     if (sidecarTBScriptPath != null) {

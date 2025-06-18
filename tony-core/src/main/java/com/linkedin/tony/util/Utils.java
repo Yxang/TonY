@@ -903,13 +903,26 @@ public class Utils {
         LOG.fatal("Failed to unarchive " + tonySrcZipName, e);
       }
     }
-    File venvZip = new File(Constants.PYTHON_VENV_ZIP);
-    if (venvZip.exists() && venvZip.isFile()) {
-      LOG.info("Unpacking Python virtual environment.. ");
+    
+    // Look for Python virtual environment file with any extension (venv.*)
+    File venvFile = null;
+    File currentDir = new File(".");
+    File[] files = currentDir.listFiles();
+    if (files != null) {
+      for (File file : files) {
+        if (file.isFile() && file.getName().startsWith(Constants.PYTHON_VENV_FILE + ".")) {
+          venvFile = file;
+          break;
+        }
+      }
+    }
+    
+    if (venvFile != null && venvFile.exists() && venvFile.isFile()) {
+      LOG.info("Unpacking Python virtual environment: " + venvFile.getName());
       try {
-        Utils.unarchive(Constants.PYTHON_VENV_ZIP, Constants.PYTHON_VENV_DIR);
+        Utils.unarchive(venvFile.getName(), Constants.PYTHON_VENV_DIR);
       } catch (IOException e) {
-        LOG.fatal("Failed to unarchive " + venvZip.getName(), e);
+        LOG.fatal("Failed to unarchive " + venvFile.getName(), e);
       }
     } else {
       LOG.info("No virtual environment uploaded.");

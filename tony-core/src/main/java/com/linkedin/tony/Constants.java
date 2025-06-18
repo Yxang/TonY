@@ -85,7 +85,7 @@ public class Constants {
 
   public static final String TONY_JAR_NAME = "tony.jar";
 
-  public static final String PYTHON_VENV_ZIP = "venv.zip";
+  public static final String PYTHON_VENV_FILE = "venv";
   public static final String PYTHON_VENV_DIR = "venv";
   public static final String TASK_PARAM_KEY = "MODEL_PARAMS";
 
