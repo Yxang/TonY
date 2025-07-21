@@ -41,6 +41,7 @@ dependencies {
   play deps.external.scala_compiler
   play deps.hadoop.common
   play deps.hadoop.yarn_api
+  play deps.hadoop.hdfs_client
 
   playTest deps.external.assertj
   playTest deps.external.awaitility

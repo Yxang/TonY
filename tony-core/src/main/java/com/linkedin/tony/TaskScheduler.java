@@ -17,6 +17,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+import com.linkedin.tony.TonySession.TonyTask;
+
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -41,6 +43,25 @@ public class TaskScheduler {
   private Map<String, LocalResource> localResources;
   private Map<String, Map<String, LocalResource>> jobTypeToContainerResources;
 
+  //=== Placement constraint retry support ===
+  private static class PlacementTracker {
+    final JobContainerRequest originalRequest;
+    int expectedCount;
+    List<Long> outstandingAllocationIds;
+    long lastIssueTs;
+
+    PlacementTracker(JobContainerRequest originalRequest, List<Long> outstandingAllocationIds) {
+      this.originalRequest = originalRequest;
+      this.expectedCount = originalRequest.getNumInstances();
+      this.outstandingAllocationIds = outstandingAllocationIds;
+      this.lastIssueTs = System.currentTimeMillis();
+    }
+  }
+
+  private final Map<String, PlacementTracker> placementTrackers = new ConcurrentHashMap<>();
+  private java.util.concurrent.ScheduledExecutorService placementRetryExecutor;
+  private int placementRetryIntervalMs;
+
   boolean dependencyCheckPassed = true;
 
   public TaskScheduler(TonySession session, AMRMClientAsync<AMRMClient.ContainerRequest> amRMClient, Map<String, LocalResource> localResources,
@@ -51,6 +72,22 @@ public class TaskScheduler {
     this.resourceFs = resourceFs;
     this.tonyConf = tonyConf;
     this.jobTypeToContainerResources = jobTypeToContainerResources;
+
+    this.placementRetryIntervalMs = tonyConf.getInt(
+        TonyConfigurationKeys.APPLICATION_PLACEMENT_RETRY_INTERVAL_MS,
+        TonyConfigurationKeys.DEFAULT_APPLICATION_PLACEMENT_RETRY_INTERVAL_MS);
+
+    if (placementRetryIntervalMs > 0) {
+      this.placementRetryExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "placement-retry-thread");
+        t.setDaemon(true);
+        return t;
+      });
+      this.placementRetryExecutor.scheduleAtFixedRate(this::retryUnallocatedPlacementRequests,
+          placementRetryIntervalMs,
+          placementRetryIntervalMs,
+          java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
   }
 
   public void scheduleTasks() {
@@ -98,7 +135,9 @@ public class TaskScheduler {
       //
       // Tips: the app level placement constraint spec must be together with scheduling
       //       request api, otherwise, it is invalid.
-      HadoopCompatibleAdapter.constructAndAddSchedulingRequest(amRMClient, request);
+      List<Long> allocIds = HadoopCompatibleAdapter.constructAndAddSchedulingRequest(amRMClient, request);
+      // track for retry
+      placementTrackers.put(request.getJobName(), new PlacementTracker(request, allocIds));
     } else {
       AMRMClient.ContainerRequest containerAsk = Utils.setupContainerRequestForRM(request);
       for (int i = 0; i < request.getNumInstances(); i++) {
@@ -145,6 +184,61 @@ public class TaskScheduler {
         scheduleJob(waitingRequest);
       }
     }
+  }
+
+  /**
+   * Periodically invoked to retry placement-constrained scheduling requests that have not yet been satisfied.
+   */
+  private void retryUnallocatedPlacementRequests() {
+    if (placementTrackers.isEmpty()) {
+      return;
+    }
+
+    long now = System.currentTimeMillis();
+
+    placementTrackers.entrySet().removeIf(entry -> {
+      String jobName = entry.getKey();
+      PlacementTracker tracker = entry.getValue();
+
+      // Compute number of allocated tasks for this job.
+      int allocated = 0;
+      Map<String, TonyTask[]> tasksMap = session.getTonyTasks();
+      TonyTask[] tasksArr = tasksMap.get(jobName);
+      if (tasksArr != null) {
+        for (TonyTask t : tasksArr) {
+          if (t != null) {
+            allocated++;
+          }
+        }
+      }
+
+      int remaining = tracker.expectedCount - allocated;
+
+      if (remaining <= 0) {
+        // All containers have been allocated – no more tracking required.
+        HadoopCompatibleAdapter.removeSchedulingRequests(amRMClient, tracker.outstandingAllocationIds);
+        return true; // remove entry
+      }
+
+      // Not all allocated – check if it's time to retry.
+      if (now - tracker.lastIssueTs >= placementRetryIntervalMs) {
+        // Cancel previous outstanding scheduling requests.
+        HadoopCompatibleAdapter.removeSchedulingRequests(amRMClient, tracker.outstandingAllocationIds);
+
+        // Issue new requests for remaining containers.
+        JobContainerRequest orig = tracker.originalRequest;
+        JobContainerRequest newReq = new JobContainerRequest(orig.getJobName(), remaining, orig.getMemory(),
+            orig.getVCores(), orig.getGPU(), orig.getPriority(), orig.getNodeLabelsExpression(), orig.getDependsOn(),
+            orig.getPlacementSpec(), orig.getAllocationTags());
+
+        List<Long> newIds = HadoopCompatibleAdapter.constructAndAddSchedulingRequest(amRMClient, newReq);
+
+        tracker.outstandingAllocationIds = newIds;
+        tracker.lastIssueTs = now;
+      }
+
+      return false; // keep tracking
+    });
   }
 
   static boolean isDAG(final List<JobContainerRequest> containersRequests) {

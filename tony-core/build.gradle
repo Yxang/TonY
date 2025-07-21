@@ -20,6 +20,7 @@ dependencies {
     exclude group: 'org.slf4j'
   }
   compile deps.hadoop.hdfs
+  compile deps.hadoop.hdfs_client
   compile deps.hadoop.yarn_api
   compile deps.hadoop.yarn_client
   compile deps.hadoop.yarn_common
