@@ -125,6 +125,14 @@ public class TonyConfigurationKeys {
       + "-retry-interval-ms"; // Interval to retry placement constrained container requests in milliseconds
   public static final int DEFAULT_APPLICATION_PLACEMENT_RETRY_INTERVAL_MS = 30 * 1000;
 
+  public static final String APPLICATION_ALT_PLACEMENT_SPEC = TONY_APPLICATION_PREFIX + "alt-placement-spec";
+  public static final String APPLICATION_PLACEMENT_ALT_FALLBACK_TIMEOUT_MS = TONY_APPLICATION_PREFIX
+      + "placement-alt-fallback-timeout-ms"; // Time to wait before falling back to alt placement spec
+  public static final int DEFAULT_APPLICATION_PLACEMENT_ALT_FALLBACK_TIMEOUT_MS = 120 * 1000; // 2 minutes
+  public static final String APPLICATION_PLACEMENT_ALT_FALLBACK_ATTEMPTS = TONY_APPLICATION_PREFIX
+      + "placement-alt-fallback-attempts"; // Number of retry attempts before falling back to alt placement spec
+  public static final int DEFAULT_APPLICATION_PLACEMENT_ALT_FALLBACK_ATTEMPTS = 4;
+
   public static final String ENABLE_PREPROCESSING_JOB = TONY_APPLICATION_PREFIX + "enable-preprocess";
   public static final boolean DEFAULT_ENABLE_PREPROCESSING_JOB = false;
 
@@ -253,6 +261,10 @@ public class TonyConfigurationKeys {
 
   public static String getPlacementSpecKey(String jobName) {
     return String.format(TONY_PREFIX + "%s.placement-spec", jobName);
+  }
+
+  public static String getAltPlacementSpecKey(String jobName) {
+    return String.format(TONY_PREFIX + "%s.alt-placement-spec", jobName);
   }
 
   public static String getAllocationSpecKey(String jobName) {
