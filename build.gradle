@@ -96,7 +96,7 @@ ext.deps = [
 
 allprojects {
   group = "com.linkedin.tony"
-  project.version = "0.5.3.opera"
+  project.version = "0.5.3.opera.0.1.0"
 }
 
 task sourcesJar(type: Jar) {
