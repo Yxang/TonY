@@ -248,16 +248,25 @@ public class TaskScheduler {
         boolean shouldFallbackToAlt = !tracker.usingAltPlacementSpec && shouldFallbackToAltPlacementSpec(tracker, now);
 
         String placementSpec = orig.getPlacementSpec();
+        LOG.info("[Placement] Debug - Original placement spec: " + placementSpec);
+        LOG.info("[Placement] Debug - Should fallback to alt: " + shouldFallbackToAlt);
+        LOG.info("[Placement] Debug - Currently using alt placement spec: " + tracker.usingAltPlacementSpec);
+        
         if (shouldFallbackToAlt) {
           String altPlacementSpec = getAlternativePlacementSpec(jobName);
+          LOG.info("[Placement] Debug - Retrieved alt placement spec: " + altPlacementSpec);
           if (StringUtils.isNotEmpty(altPlacementSpec)) {
             placementSpec = altPlacementSpec;
             tracker.usingAltPlacementSpec = true;
             LOG.info("[Placement] Falling back to alternative placement spec '" + altPlacementSpec 
                 + "' for job '" + jobName + "' after " + tracker.retryAttempts + " attempts and " 
                 + (now - tracker.firstIssueTs) + "ms timeout");
+          } else {
+            LOG.warn("[Placement] Debug - Alternative placement spec is empty, cannot fallback");
           }
         }
+        
+        LOG.info("[Placement] Debug - Final placement spec to use: " + placementSpec);
 
         LOG.info("[Placement] Retry for job '" + jobName + "': still need " + remaining
             + " containers (attempt " + tracker.retryAttempts + ", using " 
@@ -291,13 +300,23 @@ public class TaskScheduler {
    */
   private String getAlternativePlacementSpec(String jobName) {
     // First try job-specific alternative placement spec
-    String jobAltPlacementSpec = tonyConf.get(TonyConfigurationKeys.getAltPlacementSpecKey(jobName));
+    String jobAltPlacementSpecKey = TonyConfigurationKeys.getAltPlacementSpecKey(jobName);
+    String jobAltPlacementSpec = tonyConf.get(jobAltPlacementSpecKey);
+    
+    LOG.info("[Placement] Debug - Looking for job-specific alt placement spec with key: " + jobAltPlacementSpecKey);
+    LOG.info("[Placement] Debug - Job-specific alt placement spec value: " + jobAltPlacementSpec);
+    
     if (StringUtils.isNotEmpty(jobAltPlacementSpec)) {
+      LOG.info("[Placement] Debug - Using job-specific alt placement spec: " + jobAltPlacementSpec);
       return jobAltPlacementSpec;
     }
     
     // Fall back to application-level alternative placement spec
-    return tonyConf.get(APPLICATION_ALT_PLACEMENT_SPEC);
+    String appAltPlacementSpec = tonyConf.get(APPLICATION_ALT_PLACEMENT_SPEC);
+    LOG.info("[Placement] Debug - Application-level alt placement spec: " + appAltPlacementSpec);
+    LOG.info("[Placement] Debug - Final alt placement spec returned: " + appAltPlacementSpec);
+    
+    return appAltPlacementSpec;
   }
 
   /**
