@@ -10,8 +10,10 @@ import com.linkedin.tony.models.JobContainerRequest;
 import com.linkedin.tony.TonyConfig;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.SocketException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -23,6 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CommonConfigurationKeys;
@@ -93,6 +98,64 @@ public class TestUtils {
       assertTrue(Files.exists(unzippedFilePath));
     } finally {
       FileUtils.deleteDirectory(tempDirTar.toFile());
+    }
+  }
+
+  @Test
+  public void testUnarchiveWithSymlink() throws Exception {
+    Path tempDir = Files.createTempDirectory("tony-test-symlink");
+    try {
+      // 1. Create source directory and files for tarball
+      Path sourceDir = tempDir.resolve("source");
+      Files.createDirectories(sourceDir);
+
+      Path fileToLink = sourceDir.resolve("file.txt");
+      Files.write(fileToLink, "hello".getBytes(StandardCharsets.UTF_8));
+
+      Path symlink = sourceDir.resolve("link.txt");
+      Path fileNamePath = fileToLink.getFileName();
+      if (fileNamePath == null) {
+        throw new IllegalStateException("Failed to get file name from " + fileToLink);
+      }
+      Files.createSymbolicLink(symlink, fileNamePath);
+
+      // 2. Create tar.gz file with symlink
+      Path tarGzFile = tempDir.resolve("test.tar.gz");
+      try (FileOutputStream fos = new FileOutputStream(tarGzFile.toFile());
+          GzipCompressorOutputStream gzos = new GzipCompressorOutputStream(fos);
+          TarArchiveOutputStream taos = new TarArchiveOutputStream(gzos)) {
+        String fileName = fileNamePath.toString();
+
+        // Add file
+        TarArchiveEntry fileEntry = new TarArchiveEntry(fileToLink.toFile(), fileName);
+        taos.putArchiveEntry(fileEntry);
+        Files.copy(fileToLink, taos);
+        taos.closeArchiveEntry();
+
+        // Add symlink explicitly
+        Path symlinkNamePath = symlink.getFileName();
+        if (symlinkNamePath == null) {
+          throw new IllegalStateException("Failed to get file name from " + symlink);
+        }
+        TarArchiveEntry symlinkEntry = new TarArchiveEntry(symlinkNamePath.toString(), TarArchiveEntry.LF_SYMLINK);
+        symlinkEntry.setLinkName(fileName);
+        taos.putArchiveEntry(symlinkEntry);
+        taos.closeArchiveEntry();
+      }
+
+      // 3. Unarchive and verify
+      Path destDir = tempDir.resolve("dest");
+      Utils.unarchive(tarGzFile.toAbsolutePath().toString(), destDir.toAbsolutePath().toString());
+
+      Path unarchivedFile = destDir.resolve("file.txt");
+      Path unarchivedSymlink = destDir.resolve("link.txt");
+
+      assertTrue(Files.exists(unarchivedFile));
+      assertTrue(Files.isSymbolicLink(unarchivedSymlink));
+      assertEquals(Files.readSymbolicLink(unarchivedSymlink), Paths.get(fileNamePath.toString()));
+
+    } finally {
+      FileUtils.deleteDirectory(tempDir.toFile());
     }
   }
 

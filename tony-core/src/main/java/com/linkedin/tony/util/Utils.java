@@ -17,6 +17,7 @@ import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
@@ -206,6 +207,14 @@ public class Utils {
               throw new IOException("Failed to create directory " + outputFile);
             }
           }
+        } else if (entry.isSymbolicLink()) {
+          File parent = outputFile.getParentFile();
+          if (!parent.exists()) {
+            if (!parent.mkdirs() && !parent.isDirectory()) {
+              throw new IOException("Failed to create directory " + parent);
+            }
+          }
+          Files.createSymbolicLink(outputFile.toPath(), Paths.get(entry.getLinkName()));
         } else {
           File parent = outputFile.getParentFile();
           if (!parent.exists()) {
