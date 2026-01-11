@@ -30,18 +30,20 @@ The jar required to run TonY will be located in `./tony-cli/build/libs/`.
 ## Usage
 
 There are two ways to launch your deep learning jobs with TonY:
-- Use a zipped Python virtual environment.
+- Use a packaged Python virtual environment.
 - Use Docker container.
 
-### Use a zipped Python virtual environment
+### Use a packaged Python virtual environment
 
 The difference between this approach and the one with Docker is
 - You don't need to set up your Hadoop cluster with Docker support.
 - There is no requirement on a Docker image registry.
 
-As you know, nothing comes for free. If you don't want to bother setting your cluster with Docker support, you'd need to prepare a zipped virtual environment for your job and your cluster should have the same OS version as the computer which builds the Python virtual environment.
+As you know, nothing comes for free. If you don't want to bother setting your cluster with Docker support, you'd need to prepare a packaged virtual environment for your job and your cluster should have the same OS version as the computer which builds the Python virtual environment. TonY supports `.zip`, `.tar.gz`, and `.tar` formats.
 
-#### Python virtual environment in a zip
+#### Python virtual environment in an archive file
+
+For example, if you are using a zip file:
 
     $ unzip -Z1 my-venv.zip | head -n 10
       Python/
@@ -158,7 +160,7 @@ The command line arguments are as follows:
 | executes           | yes       | --executes model/mnist.py                         | Location to the entry point of your training code.                                                                                                                                                                |
 | src_dir            | yes       | --src src/                                        | Specifies the name of the root directory locally which contains all of your python model source code. This directory will be copied to all worker node.                                                           |
 | task_params        | no        | --input_dir /hdfs/input --output_dir /hdfs/output | The command line arguments which will be passed to your entry point                                                                                                                                               |
-| python_venv        | no        | --python_venv venv.zip                            | Local or remote Path to the *zipped* Python virtual environment, remote path like `--python_venv hdfs://nameservice01/user/tony/venv.zip`                                                                         |
+| python_venv        | no        | --python_venv venv.zip                            | Local or remote Path to the packaged Python virtual environment (e.g., a .zip, .tar.gz, or .tar file), remote path like `--python_venv hdfs://nameservice01/user/tony/venv.zip`                                    |
 | python_binary_path | no        | --python_binary_path Python/bin/python            | Used together with python_venv, describes the relative path in your python virtual environment which contains the python binary, or an absolute path to use a python binary already installed on all worker nodes |
 | shell_env          | no        | --shell_env LD_LIBRARY_PATH=/usr/local/lib64/     | Specifies key-value pairs for environment variables which will be set in your python worker/ps processes.                                                                                                         |
 | conf_file          | no        | --conf_file tony-local.xml                        | Location of a TonY configuration file, also support remote path, like `--conf_file hdfs://nameservice01/user/tony/tony-remote.xml`                                                                                |

@@ -14,7 +14,9 @@ dependencies {
   compile deps.hadoop.common
   compile deps.hadoop.common_test
   compile deps.hadoop.hdfs
+  compile deps.hadoop.hdfs_client
   compile deps.hadoop.hdfs_test
+  compile deps.hadoop.hdfs_client_test
   compile deps.hadoop.yarn_api
   compile deps.hadoop.yarn_client
   compile deps.hadoop.yarn_common

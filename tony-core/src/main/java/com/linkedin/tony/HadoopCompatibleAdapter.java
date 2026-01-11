@@ -199,21 +199,75 @@ public final class HadoopCompatibleAdapter {
         }
     }
 
-    public static void constructAndAddSchedulingRequest(AMRMClientAsync<AMRMClient.ContainerRequest> amRMClient,
+    /**
+     * Construct YARN {@code SchedulingRequest}s for the given {@link JobContainerRequest} and submit them to the
+     * {@link AMRMClientAsync}. The method returns the allocation request IDs assigned by YARN so that callers can later
+     * cancel these requests if they time-out.
+     *
+     * @param amRMClient       the asynchronous RM client
+     * @param containerRequest the TonY container request containing placement constraint specification
+     * @return list of allocation request IDs corresponding to the submitted scheduling requests
+     */
+    public static List<Long> constructAndAddSchedulingRequest(
+            AMRMClientAsync<AMRMClient.ContainerRequest> amRMClient,
             JobContainerRequest containerRequest) {
         try {
             List<Object> reqs = new ArrayList<>();
-            Object schedReq = constructSchedulingRequest(containerRequest);
-            LOG.info("Request schedling containers ask: " + schedReq);
+            List<Long> allocationRequestIds = new ArrayList<>();
+
+            // Build one SchedulingRequest for each container instance requested so that each has its own
+            // allocationRequestId which can later be used for cancellation.
             for (int i = 0; i < containerRequest.getNumInstances(); i++) {
+                Object schedReq = constructSchedulingRequest(containerRequest);
+
+                // Extract allocationRequestId via reflection so that we can cancel if needed
+                Method getIdMethod = Arrays.stream(schedReq.getClass().getMethods())
+                        .filter(m -> m.getName().equals("getAllocationRequestId") && m.getParameterCount() == 0)
+                        .findFirst().orElse(null);
+
+                if (getIdMethod != null) {
+                    long allocId = (Long) getIdMethod.invoke(schedReq);
+                    allocationRequestIds.add(allocId);
+                }
+
                 reqs.add(schedReq);
             }
+
             Method addMethod = Arrays.stream(amRMClient.getClass().getMethods())
                     .filter(x -> x.getName().equals("addSchedulingRequests") && x.getParameterCount() == 1)
                     .findFirst().get();
             addMethod.invoke(amRMClient, reqs);
+            return allocationRequestIds;
         } catch (Exception e) {
             throw new RuntimeException("Errors on adding scheduing request.", e);
+        }
+    }
+
+    /**
+     * Removes the scheduling requests with the specified allocation request IDs from YARN.
+     *
+     * @param amRMClient            the asynchronous RM client
+     * @param allocationRequestIds  list of allocation request IDs to be removed
+     */
+    public static void removeSchedulingRequests(
+            AMRMClientAsync<AMRMClient.ContainerRequest> amRMClient,
+            List<Long> allocationRequestIds) {
+        if (allocationRequestIds == null || allocationRequestIds.isEmpty()) {
+            return;
+        }
+        try {
+            Method removeMethod = Arrays.stream(amRMClient.getClass().getMethods())
+                    .filter(x -> x.getName().equals("removeSchedulingRequests") && x.getParameterCount() == 1)
+                    .findFirst().orElse(null);
+
+            if (removeMethod != null) {
+                removeMethod.invoke(amRMClient, allocationRequestIds);
+                LOG.info("Removed scheduling requests " + allocationRequestIds);
+            } else {
+                LOG.warn("Unable to find method removeSchedulingRequests on AMRMClient. Skipping cancellation of " + allocationRequestIds);
+            }
+        } catch (Exception e) {
+            LOG.warn("Errors while removing scheduling requests " + allocationRequestIds, e);
         }
     }
 

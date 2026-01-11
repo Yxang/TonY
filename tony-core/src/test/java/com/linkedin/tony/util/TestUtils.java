@@ -10,8 +10,10 @@ import com.linkedin.tony.models.JobContainerRequest;
 import com.linkedin.tony.TonyConfig;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.SocketException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -23,6 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CommonConfigurationKeys;
@@ -30,6 +35,8 @@ import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.testng.annotations.Test;
+
+import org.apache.commons.io.FileUtils;
 
 import static com.linkedin.tony.Constants.JOBS_SUFFIX;
 import static com.linkedin.tony.Constants.LOGS_SUFFIX;
@@ -40,7 +47,6 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
-import static org.testng.Assert.fail;
 
 
 public class TestUtils {
@@ -59,17 +65,97 @@ public class TestUtils {
   }
 
   @Test
-  public void testUnzipArchive() {
+  public void testUnarchive() throws Exception {
+    // Test .zip
     ClassLoader classLoader = getClass().getClassLoader();
-    File file = new File(classLoader.getResource("test.zip").getFile());
+    Path tempDirZip = Files.createTempDirectory("tony-test-unarchive-zip");
     try {
-      Utils.unzipArchive(file.getPath(), "venv/");
-      Path unzippedFilePath = Paths.get("venv/123.xml");
+      File zipFile = new File(classLoader.getResource("test.zip").toURI());
+      Utils.unarchive(zipFile.getAbsolutePath(), tempDirZip.toAbsolutePath().toString());
+      Path unzippedFilePath = tempDirZip.resolve("123.xml");
       assertTrue(Files.exists(unzippedFilePath));
-      Files.deleteIfExists(Paths.get("venv/123.xml"));
-      Files.deleteIfExists(Paths.get("venv/"));
-    } catch (IOException e) {
-      fail(e.toString());
+    } finally {
+      FileUtils.deleteDirectory(tempDirZip.toFile());
+    }
+
+    // Test .tar.gz
+    Path tempDirTarGz = Files.createTempDirectory("tony-test-unarchive-targz");
+    try {
+      File tarGzFile = new File(classLoader.getResource("test.tar.gz").toURI());
+      Utils.unarchive(tarGzFile.getAbsolutePath(), tempDirTarGz.toAbsolutePath().toString());
+      Path unzippedFilePath = tempDirTarGz.resolve("test.file");
+      assertTrue(Files.exists(unzippedFilePath));
+    } finally {
+      FileUtils.deleteDirectory(tempDirTarGz.toFile());
+    }
+
+    // Test .tar
+    Path tempDirTar = Files.createTempDirectory("tony-test-unarchive-tar");
+    try {
+      File tarFile = new File(classLoader.getResource("test.tar").toURI());
+      Utils.unarchive(tarFile.getAbsolutePath(), tempDirTar.toAbsolutePath().toString());
+      Path unzippedFilePath = tempDirTar.resolve("test.file");
+      assertTrue(Files.exists(unzippedFilePath));
+    } finally {
+      FileUtils.deleteDirectory(tempDirTar.toFile());
+    }
+  }
+
+  @Test
+  public void testUnarchiveWithSymlink() throws Exception {
+    Path tempDir = Files.createTempDirectory("tony-test-symlink");
+    try {
+      // 1. Create source directory and files for tarball
+      Path sourceDir = tempDir.resolve("source");
+      Files.createDirectories(sourceDir);
+
+      Path fileToLink = sourceDir.resolve("file.txt");
+      Files.write(fileToLink, "hello".getBytes(StandardCharsets.UTF_8));
+
+      Path symlink = sourceDir.resolve("link.txt");
+      Path fileNamePath = fileToLink.getFileName();
+      if (fileNamePath == null) {
+        throw new IllegalStateException("Failed to get file name from " + fileToLink);
+      }
+      Files.createSymbolicLink(symlink, fileNamePath);
+
+      // 2. Create tar.gz file with symlink
+      Path tarGzFile = tempDir.resolve("test.tar.gz");
+      try (FileOutputStream fos = new FileOutputStream(tarGzFile.toFile());
+          GzipCompressorOutputStream gzos = new GzipCompressorOutputStream(fos);
+          TarArchiveOutputStream taos = new TarArchiveOutputStream(gzos)) {
+        String fileName = fileNamePath.toString();
+
+        // Add file
+        TarArchiveEntry fileEntry = new TarArchiveEntry(fileToLink.toFile(), fileName);
+        taos.putArchiveEntry(fileEntry);
+        Files.copy(fileToLink, taos);
+        taos.closeArchiveEntry();
+
+        // Add symlink explicitly
+        Path symlinkNamePath = symlink.getFileName();
+        if (symlinkNamePath == null) {
+          throw new IllegalStateException("Failed to get file name from " + symlink);
+        }
+        TarArchiveEntry symlinkEntry = new TarArchiveEntry(symlinkNamePath.toString(), TarArchiveEntry.LF_SYMLINK);
+        symlinkEntry.setLinkName(fileName);
+        taos.putArchiveEntry(symlinkEntry);
+        taos.closeArchiveEntry();
+      }
+
+      // 3. Unarchive and verify
+      Path destDir = tempDir.resolve("dest");
+      Utils.unarchive(tarGzFile.toAbsolutePath().toString(), destDir.toAbsolutePath().toString());
+
+      Path unarchivedFile = destDir.resolve("file.txt");
+      Path unarchivedSymlink = destDir.resolve("link.txt");
+
+      assertTrue(Files.exists(unarchivedFile));
+      assertTrue(Files.isSymbolicLink(unarchivedSymlink));
+      assertEquals(Files.readSymbolicLink(unarchivedSymlink), Paths.get(fileNamePath.toString()));
+
+    } finally {
+      FileUtils.deleteDirectory(tempDir.toFile());
     }
   }
 

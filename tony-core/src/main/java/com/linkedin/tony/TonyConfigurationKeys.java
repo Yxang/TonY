@@ -121,6 +121,17 @@ public class TonyConfigurationKeys {
   public static final String APPLICATION_NODE_LABEL = TONY_APPLICATION_PREFIX + "node-label";
 
   public static final String APPLICATION_PLACEMENT_SPEC = TONY_APPLICATION_PREFIX + "placement-spec";
+  public static final String APPLICATION_PLACEMENT_RETRY_INTERVAL_MS = APPLICATION_PLACEMENT_SPEC
+      + "-retry-interval-ms"; // Interval to retry placement constrained container requests in milliseconds
+  public static final int DEFAULT_APPLICATION_PLACEMENT_RETRY_INTERVAL_MS = 30 * 1000;
+
+  public static final String APPLICATION_ALT_PLACEMENT_SPEC = TONY_APPLICATION_PREFIX + "alt-placement-spec";
+  public static final String APPLICATION_PLACEMENT_ALT_FALLBACK_TIMEOUT_MS = TONY_APPLICATION_PREFIX
+      + "placement-alt-fallback-timeout-ms"; // Time to wait before falling back to alt placement spec
+  public static final int DEFAULT_APPLICATION_PLACEMENT_ALT_FALLBACK_TIMEOUT_MS = 120 * 1000; // 2 minutes
+  public static final String APPLICATION_PLACEMENT_ALT_FALLBACK_ATTEMPTS = TONY_APPLICATION_PREFIX
+      + "placement-alt-fallback-attempts"; // Number of retry attempts before falling back to alt placement spec
+  public static final int DEFAULT_APPLICATION_PLACEMENT_ALT_FALLBACK_ATTEMPTS = 4;
 
   public static final String ENABLE_PREPROCESSING_JOB = TONY_APPLICATION_PREFIX + "enable-preprocess";
   public static final boolean DEFAULT_ENABLE_PREPROCESSING_JOB = false;
@@ -128,7 +139,8 @@ public class TonyConfigurationKeys {
   public static final String APPLICATION_TIMEOUT = TONY_APPLICATION_PREFIX + "timeout";
   public static final int DEFAULT_APPLICATION_TIMEOUT = 0;
 
-  public static final String RM_CLIENT_CONNECT_RETRY_MULTIPLIER = TONY_APPLICATION_PREFIX + "num-client-rm-connect-retries";
+  public static final String RM_CLIENT_CONNECT_RETRY_MULTIPLIER = TONY_APPLICATION_PREFIX
+      + "num-client-rm-connect-retries";
   public static final int DEFAULT_RM_CLIENT_CONNECT_RETRY_MULTIPLIER = 3;
 
   public static final String APPLICATION_TAGS = TONY_APPLICATION_PREFIX + "tags";
@@ -147,7 +159,8 @@ public class TonyConfigurationKeys {
   public static final String TONY_TASK_PREFIX = TONY_PREFIX + "task.";
 
   /**
-   * Max total number of task instances that can be requested across all task types.
+   * Max total number of task instances that can be requested across all task
+   * types.
    */
   public static final String MAX_TOTAL_INSTANCES = TONY_TASK_PREFIX + "max-total-instances";
   public static final int DEFAULT_MAX_TOTAL_INSTANCES = -1;
@@ -157,7 +170,8 @@ public class TonyConfigurationKeys {
   public static final String TASK_EXECUTOR_JVM_OPTS = TONY_TASK_PREFIX + "executor.jvm.opts";
   public static final String DEFAULT_TASK_EXECUTOR_JVM_OPTS = "-Xmx1536m";
 
-  public static final String TASK_EXECUTOR_EXECUTION_ERROR_MESSAGE_MAX_DEPTH = TONY_TASK_PREFIX + "executor.execution.error-message-max-depth";
+  public static final String TASK_EXECUTOR_EXECUTION_ERROR_MESSAGE_MAX_DEPTH = TONY_TASK_PREFIX
+      + "executor.execution.error-message-max-depth";
   public static final int DEFAULT_TASK_EXECUTOR_EXECUTION_ERROR_MESSAGE_MAX_DEPTH = 20;
 
   public static final String TASK_DEFAULT_JVM_OPTS = TONY_TASK_PREFIX + "default.jvm.opts";
@@ -214,7 +228,9 @@ public class TonyConfigurationKeys {
   }
 
   /**
-   * Configuration key for property controlling how many {@code jobName} task instances a job can request.
+   * Configuration key for property controlling how many {@code jobName} task
+   * instances a job can request.
+   * 
    * @param jobName the task type for which to get the max instances config key
    * @return the max instances configuration key for the {@code jobName}
    */
@@ -245,6 +261,10 @@ public class TonyConfigurationKeys {
 
   public static String getPlacementSpecKey(String jobName) {
     return String.format(TONY_PREFIX + "%s.placement-spec", jobName);
+  }
+
+  public static String getAltPlacementSpecKey(String jobName) {
+    return String.format(TONY_PREFIX + "%s.alt-placement-spec", jobName);
   }
 
   public static String getAllocationSpecKey(String jobName) {
@@ -307,7 +327,8 @@ public class TonyConfigurationKeys {
   public static final String STOP_ON_FAILURE_JOBTYPES = TONY_APPLICATION_PREFIX + "stop-on-failure-jobtypes";
 
   // Tony configuration to return failure when a worker failed
-  public static final String FAIL_ON_WORKER_FAILURE_ENABLED = TONY_APPLICATION_PREFIX + "fail-on-worker-failure-enabled";
+  public static final String FAIL_ON_WORKER_FAILURE_ENABLED = TONY_APPLICATION_PREFIX
+      + "fail-on-worker-failure-enabled";
   public static final boolean DEFAULT_FAIL_ON_WORKER_FAILURE_ENABLED = false;
 
   // Tony with docker configuration
@@ -371,10 +392,10 @@ public class TonyConfigurationKeys {
    * tony.application.dependency.evaluator.timeout.after.A = 3600
    */
   public static final String GROUP_REGEX = TONY_APPLICATION_PREFIX + "group\\.([A-Za-z]+)$";
-  public static final String GROUP_DEPEND_TIMEOUT_REGEX =
-      TONY_APPLICATION_PREFIX + "dependency\\.([A-Za-z]+)\\.timeout\\.after\\.([A-Za-z]+)$";
-  public static final String GROUP_DEPEND_TIMEOUT_IGNORE_REGEX =
-      TONY_APPLICATION_PREFIX + "dependency\\.([A-Za-z]+)\\.timeout\\.after\\.([A-Za-z]+)$.ignored";
+  public static final String GROUP_DEPEND_TIMEOUT_REGEX = TONY_APPLICATION_PREFIX
+      + "dependency\\.([A-Za-z]+)\\.timeout\\.after\\.([A-Za-z]+)$";
+  public static final String GROUP_DEPEND_TIMEOUT_IGNORE_REGEX = TONY_APPLICATION_PREFIX
+      + "dependency\\.([A-Za-z]+)\\.timeout\\.after\\.([A-Za-z]+)$.ignored";
 
   public static String getGroupKey(String groupName) {
     return String.format(TONY_APPLICATION_PREFIX + "group.%s", groupName);

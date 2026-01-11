@@ -33,6 +33,16 @@ public class TestLocalizableResource {
     Assert.assertNotNull(resource4.toLocalResource().getResource());
     Assert.assertSame(resource4.toLocalResource().getType(), LocalResourceType.ARCHIVE);
     Assert.assertEquals(resource4.getLocalizedFileName(), "test.zip");
+
+    LocalizableResource resource5 = new LocalizableResource("tony-core/src/test/resources/test.tar.gz#archive", conf);
+    Assert.assertNotNull(resource5.toLocalResource().getResource());
+    Assert.assertSame(resource5.toLocalResource().getType(), LocalResourceType.ARCHIVE);
+    Assert.assertEquals(resource5.getLocalizedFileName(), "test.tar.gz");
+
+    LocalizableResource resource6 = new LocalizableResource("tony-core/src/test/resources/test.tar#archive", conf);
+    Assert.assertNotNull(resource6.toLocalResource().getResource());
+    Assert.assertSame(resource6.toLocalResource().getType(), LocalResourceType.ARCHIVE);
+    Assert.assertEquals(resource6.getLocalizedFileName(), "test.tar");
   }
 
 }

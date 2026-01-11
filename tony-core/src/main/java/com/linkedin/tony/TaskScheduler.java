@@ -17,6 +17,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+import com.linkedin.tony.TonySession.TonyTask;
+
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -28,6 +30,7 @@ import org.apache.hadoop.yarn.client.api.AMRMClient;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 
 import static com.linkedin.tony.TonyConfigurationKeys.APPLICATION_PLACEMENT_SPEC;
+import static com.linkedin.tony.TonyConfigurationKeys.APPLICATION_ALT_PLACEMENT_SPEC;
 
 public class TaskScheduler {
   private static final Log LOG = LogFactory.getLog(TaskScheduler.class);
@@ -41,6 +44,33 @@ public class TaskScheduler {
   private Map<String, LocalResource> localResources;
   private Map<String, Map<String, LocalResource>> jobTypeToContainerResources;
 
+  //=== Placement constraint retry support ===
+  private static class PlacementTracker {
+    final JobContainerRequest originalRequest;
+    int expectedCount;
+    List<Long> outstandingAllocationIds;
+    long lastIssueTs;
+    long firstIssueTs; // Track when the first request was issued for timeout calculation
+    int retryAttempts; // Track number of retry attempts for fallback
+    boolean usingAltPlacementSpec; // Track if we've fallen back to alternative placement spec
+
+    PlacementTracker(JobContainerRequest originalRequest, List<Long> outstandingAllocationIds) {
+      this.originalRequest = originalRequest;
+      this.expectedCount = originalRequest.getNumInstances();
+      this.outstandingAllocationIds = outstandingAllocationIds;
+      this.lastIssueTs = System.currentTimeMillis();
+      this.firstIssueTs = System.currentTimeMillis();
+      this.retryAttempts = 0;
+      this.usingAltPlacementSpec = false;
+    }
+  }
+
+  private final Map<String, PlacementTracker> placementTrackers = new ConcurrentHashMap<>();
+  private java.util.concurrent.ScheduledExecutorService placementRetryExecutor;
+  private int placementRetryIntervalMs;
+  private int altFallbackTimeoutMs;
+  private int altFallbackMaxAttempts;
+
   boolean dependencyCheckPassed = true;
 
   public TaskScheduler(TonySession session, AMRMClientAsync<AMRMClient.ContainerRequest> amRMClient, Map<String, LocalResource> localResources,
@@ -51,6 +81,30 @@ public class TaskScheduler {
     this.resourceFs = resourceFs;
     this.tonyConf = tonyConf;
     this.jobTypeToContainerResources = jobTypeToContainerResources;
+
+    this.placementRetryIntervalMs = tonyConf.getInt(
+        TonyConfigurationKeys.APPLICATION_PLACEMENT_RETRY_INTERVAL_MS,
+        TonyConfigurationKeys.DEFAULT_APPLICATION_PLACEMENT_RETRY_INTERVAL_MS);
+
+    this.altFallbackTimeoutMs = tonyConf.getInt(
+        TonyConfigurationKeys.APPLICATION_PLACEMENT_ALT_FALLBACK_TIMEOUT_MS,
+        TonyConfigurationKeys.DEFAULT_APPLICATION_PLACEMENT_ALT_FALLBACK_TIMEOUT_MS);
+
+    this.altFallbackMaxAttempts = tonyConf.getInt(
+        TonyConfigurationKeys.APPLICATION_PLACEMENT_ALT_FALLBACK_ATTEMPTS,
+        TonyConfigurationKeys.DEFAULT_APPLICATION_PLACEMENT_ALT_FALLBACK_ATTEMPTS);
+
+    if (placementRetryIntervalMs > 0) {
+      this.placementRetryExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "placement-retry-thread");
+        t.setDaemon(true);
+        return t;
+      });
+      this.placementRetryExecutor.scheduleAtFixedRate(this::retryUnallocatedPlacementRequests,
+          placementRetryIntervalMs,
+          placementRetryIntervalMs,
+          java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
   }
 
   public void scheduleTasks() {
@@ -98,7 +152,9 @@ public class TaskScheduler {
       //
       // Tips: the app level placement constraint spec must be together with scheduling
       //       request api, otherwise, it is invalid.
-      HadoopCompatibleAdapter.constructAndAddSchedulingRequest(amRMClient, request);
+      List<Long> allocIds = HadoopCompatibleAdapter.constructAndAddSchedulingRequest(amRMClient, request);
+      // track for retry
+      placementTrackers.put(request.getJobName(), new PlacementTracker(request, allocIds));
     } else {
       AMRMClient.ContainerRequest containerAsk = Utils.setupContainerRequestForRM(request);
       for (int i = 0; i < request.getNumInstances(); i++) {
@@ -145,6 +201,146 @@ public class TaskScheduler {
         scheduleJob(waitingRequest);
       }
     }
+  }
+
+  /**
+   * Periodically invoked to retry placement-constrained scheduling requests that have not yet been satisfied.
+   */
+  private void retryUnallocatedPlacementRequests() {
+    if (placementTrackers.isEmpty()) {
+      return;
+    }
+
+    long now = System.currentTimeMillis();
+
+    placementTrackers.entrySet().removeIf(entry -> {
+      String jobName = entry.getKey();
+      PlacementTracker tracker = entry.getValue();
+
+      // Compute number of allocated tasks for this job.
+      int allocated = 0;
+      Map<String, TonyTask[]> tasksMap = session.getTonyTasks();
+      TonyTask[] tasksArr = tasksMap.get(jobName);
+      if (tasksArr != null) {
+        for (TonyTask t : tasksArr) {
+          if (t != null) {
+            allocated++;
+          }
+        }
+      }
+
+      int remaining = tracker.expectedCount - allocated;
+
+      if (remaining <= 0) {
+        // All containers have been allocated – no more tracking required.
+        HadoopCompatibleAdapter.removeSchedulingRequests(amRMClient, tracker.outstandingAllocationIds);
+        return true; // remove entry
+      }
+
+      // Not all allocated – check if it's time to retry.
+      if (now - tracker.lastIssueTs >= placementRetryIntervalMs) {
+        tracker.retryAttempts++;
+
+        // Get original request for placement spec
+        JobContainerRequest orig = tracker.originalRequest;
+        
+        // Check if we should fallback to alternative placement spec
+        boolean shouldFallbackToAlt = !tracker.usingAltPlacementSpec && shouldFallbackToAltPlacementSpec(tracker, now);
+
+        String placementSpec = orig.getPlacementSpec();
+        LOG.info("[Placement] Debug - Original placement spec: " + placementSpec);
+        LOG.info("[Placement] Debug - Should fallback to alt: " + shouldFallbackToAlt);
+        LOG.info("[Placement] Debug - Currently using alt placement spec: " + tracker.usingAltPlacementSpec);
+        
+        if (shouldFallbackToAlt) {
+          String altPlacementSpec = getAlternativePlacementSpec(jobName);
+          LOG.info("[Placement] Debug - Retrieved alt placement spec: " + altPlacementSpec);
+          if (StringUtils.isNotEmpty(altPlacementSpec)) {
+            placementSpec = altPlacementSpec;
+            tracker.usingAltPlacementSpec = true;
+            LOG.info("[Placement] Falling back to alternative placement spec '" + altPlacementSpec 
+                + "' for job '" + jobName + "' after " + tracker.retryAttempts + " attempts and " 
+                + (now - tracker.firstIssueTs) + "ms timeout");
+          } else {
+            LOG.warn("[Placement] Debug - Alternative placement spec is empty, cannot fallback");
+          }
+        }
+        
+        LOG.info("[Placement] Debug - Final placement spec to use: " + placementSpec);
+
+        LOG.info("[Placement] Retry for job '" + jobName + "': still need " + remaining
+            + " containers (attempt " + tracker.retryAttempts + ", using " 
+            + (tracker.usingAltPlacementSpec ? "alternative" : "primary") + " placement spec). " 
+            + "Cancelling old allocationRequestIds=" + tracker.outstandingAllocationIds);
+        
+        // Cancel previous outstanding scheduling requests.
+        HadoopCompatibleAdapter.removeSchedulingRequests(amRMClient, tracker.outstandingAllocationIds);
+
+        // Issue new requests for remaining containers.
+        JobContainerRequest newReq = new JobContainerRequest(orig.getJobName(), remaining, orig.getMemory(),
+            orig.getVCores(), orig.getGPU(), orig.getPriority(), orig.getNodeLabelsExpression(), orig.getDependsOn(),
+            placementSpec, orig.getAllocationTags());
+
+        List<Long> newIds = HadoopCompatibleAdapter.constructAndAddSchedulingRequest(amRMClient, newReq);
+        LOG.info("[Placement] Resubmitted SchedulingRequests for job '" + jobName
+            + "' new allocationRequestIds=" + newIds + " with placement spec: " + placementSpec);
+
+        tracker.outstandingAllocationIds = newIds;
+        tracker.lastIssueTs = now;
+      }
+
+      return false; // keep tracking
+    });
+  }
+
+  /**
+   * Get alternative placement spec for the given job, with proper fallback hierarchy:
+   * 1. Job-specific alternative placement spec (tony.{jobName}.alt-placement-spec)
+   * 2. Application-level alternative placement spec (tony.application.alt-placement-spec)
+   */
+  private String getAlternativePlacementSpec(String jobName) {
+    // First try job-specific alternative placement spec
+    String jobAltPlacementSpecKey = TonyConfigurationKeys.getAltPlacementSpecKey(jobName);
+    String jobAltPlacementSpec = tonyConf.get(jobAltPlacementSpecKey);
+    
+    LOG.info("[Placement] Debug - Looking for job-specific alt placement spec with key: " + jobAltPlacementSpecKey);
+    LOG.info("[Placement] Debug - Job-specific alt placement spec value: " + jobAltPlacementSpec);
+    
+    if (StringUtils.isNotEmpty(jobAltPlacementSpec)) {
+      LOG.info("[Placement] Debug - Using job-specific alt placement spec: " + jobAltPlacementSpec);
+      return jobAltPlacementSpec;
+    }
+    
+    // Fall back to application-level alternative placement spec
+    String appAltPlacementSpec = tonyConf.get(APPLICATION_ALT_PLACEMENT_SPEC);
+    LOG.info("[Placement] Debug - Application-level alt placement spec: " + appAltPlacementSpec);
+    LOG.info("[Placement] Debug - Final alt placement spec returned: " + appAltPlacementSpec);
+    
+    return appAltPlacementSpec;
+  }
+
+  /**
+   * Determines whether to fallback to alternative placement spec based on timeout or max attempts.
+   */
+  private boolean shouldFallbackToAltPlacementSpec(PlacementTracker tracker, long currentTime) {
+    // Check if alternative placement spec is configured
+    String altPlacementSpec = getAlternativePlacementSpec(tracker.originalRequest.getJobName());
+    if (StringUtils.isEmpty(altPlacementSpec)) {
+      return false;
+    }
+
+    // Check timeout condition
+    long elapsedTime = currentTime - tracker.firstIssueTs;
+    if (elapsedTime >= altFallbackTimeoutMs) {
+      return true;
+    }
+
+    // Check max attempts condition  
+    if (tracker.retryAttempts >= altFallbackMaxAttempts) {
+      return true;
+    }
+
+    return false;
   }
 
   static boolean isDAG(final List<JobContainerRequest> containersRequests) {
